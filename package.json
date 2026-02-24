@@ -1,0 +1,13 @@
+{
+    "name": "scraperrrr-2-root",
+    "private": true,
+    "version": "1.0.0",
+    "workspaces": [
+        "dashboard"
+    ],
+    "scripts": {
+        "build": "npm run build --workspace=dashboard",
+        "dev": "npm run dev --workspace=dashboard",
+        "aggregator": "python3 tools/aggregator.py"
+    }
+}

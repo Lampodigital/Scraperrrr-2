@@ -1,0 +1,11 @@
+{
+    "buildCommand": "npm run build --workspace=dashboard",
+    "outputDirectory": "dashboard/dist",
+    "framework": "vite",
+    "rewrites": [
+        {
+            "source": "/(.*)",
+            "destination": "/index.html"
+        }
+    ]
+}
