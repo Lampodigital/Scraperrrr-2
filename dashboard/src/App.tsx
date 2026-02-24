@@ -44,7 +44,9 @@ function App() {
 
   const fetchData = () => {
     setLoading(true);
-    fetch('/data.json')
+    // Fetch from Modal Cloud Endpoint
+    const MODAL_URL = 'https://stefanorossiw93--glaido-scraper-get-data.modal.run';
+    fetch(MODAL_URL)
       .then(res => res.json())
       .then(d => {
         setData(d);
@@ -52,7 +54,14 @@ function App() {
       })
       .catch(err => {
         console.error("Failed to load news data:", err);
-        setLoading(false);
+        // Fallback to local data if cloud fails
+        fetch('/data.json')
+          .then(r => r.json())
+          .then(d => {
+            setData(d);
+            setLoading(false);
+          })
+          .catch(() => setLoading(false));
       });
   };
 
