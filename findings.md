@@ -1,4 +1,14 @@
-# 🔍 Findings & Research
+# 🔍 Findings
+
+## RSS Feeds
+- **Granularity**: RSS feeds for Ben's Bites and The Rundown are "Edition-level". They do not separate articles natively.
+- **Images**: RSS contains hero images for main stories but is text-only for curated "Quick Hits".
+- **Performance**: Parsing RSS XML is ~10x faster than Playwright browser rendering.
+
+## Architectural Pivot: Smart Editions
+- **Problem**: Flat article lists lose context of the newsletter and often suffer from generic/missing thumbnails.
+- **Solution**: A hierarchical "Edition" model where one card represents a newsletter, but contains a nested, immediately visible list of sub-stories.
+- **User Experience**: This allows for "Magazine-style" browsing while maintaining granular "Individual Saving" functionality.
 
 ## 🧪 Discoveries
 - **Ben's Bites:** Primary archive found at `bensbites.com` (likely Beehiiv).
@@ -14,3 +24,13 @@
 - [The Rundown AI Archive](https://www.therundown.ai/)
 - [Ben's Bites Archive](https://www.bensbites.com/)
 - [Reddit AI Search](https://www.reddit.com/r/ArtificialInteligence/new/)
+
+# 📈 Progress
+
+- [x] Initial setup and project initialization
+- [x] Scraper connectivity verification
+- [x] Basic dashboard implementation
+- [x] Advanced Image Enrichment (YouTube/OG/Social)
+- [x] Ben's Bites Deep-Scraping (Playwright)
+- [/] RSS Research & Hybrid Planning
+- [ ] Smart Editions Phase (In Progress)

@@ -14,10 +14,10 @@ from urllib.parse import urlparse, parse_qs
 app = modal.App("glaido-scraper")
 vol = modal.Volume.from_name("glaido-data", create_if_missing=True)
 
-# Image setup with Playwright
+# Image setup (Playwright no longer needed for Newsletters, but kept for future niche scrapers/Reddit expansion)
 image = (
     modal.Image.debian_slim(python_version="3.10")
-    .pip_install("requests", "beautifulsoup4", "playwright", "fastapi[standard]")
+    .pip_install("requests", "beautifulsoup4", "playwright", "fastapi[standard]", "feedparser")
     .run_commands("playwright install chromium")
     .run_commands("playwright install-deps chromium")
 )
@@ -33,270 +33,189 @@ def get_youtube_thumbnail(url):
             else:
                 qs = parse_qs(urlparse(url).query)
                 video_id = qs.get("v", [None])[0]
-            
-            if video_id:
-                return f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+            if video_id: return f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
     except: pass
     return None
 
 def get_og_image(url):
-    """Fetch Open Graph image for a URL, filtering out common generic icons/logos."""
     try:
-        if not url or not url.startswith('http'):
-            return None
-            
-        # 1. Specialized YouTube Handler
+        if not url or not url.startswith('http') or "twitter.com" in url or "x.com" in url: return None
         yt_thumb = get_youtube_thumbnail(url)
         if yt_thumb: return yt_thumb
-
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        }
-        
+        headers = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' }
         response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
-        if response.status_code != 200:
-            return None
-            
+        if response.status_code != 200: return None
         soup = BeautifulSoup(response.text, 'html.parser')
         candidates = []
-        
-        # 1. Open Graph & Twitter
         for tag in soup.find_all("meta"):
-            prop = tag.get("property", "").lower()
-            name = tag.get("name", "").lower()
+            prop = (tag.get("property") or "").lower()
+            name = (tag.get("name") or "").lower()
             content = tag.get("content", "")
             if not content: continue
-            
-            if prop in ["og:image", "og:image:url", "og:image:secure_url"]:
-                candidates.append((10, content))
-            elif name in ["twitter:image", "twitter:image:src"]:
-                candidates.append((8, content))
-
-        # 2. JSON-LD
-        for s in soup.find_all("script", type="application/ld+json"):
-            try:
-                js = json.loads(s.string)
-                def find_img(obj):
-                    if isinstance(obj, dict):
-                        img = obj.get("image")
-                        if isinstance(img, str): return img
-                        if isinstance(img, dict): return img.get("url")
-                        for v in obj.values():
-                            res = find_img(v)
-                            if res: return res
-                    elif isinstance(obj, list):
-                        for v in obj:
-                            res = find_img(v)
-                            if res: return res
-                    return None
-                img = find_img(js)
-                if img: candidates.append((9, img))
-            except: continue
-
-        if not candidates:
-            # 3. Fallback to first large image in body (usually avoids headers if we skip the top)
-            for img in soup.find_all("img"):
-                src = img.get("src")
-                if not src or not src.startswith("http"): continue
-                alt = img.get("alt", "").lower()
-                # Skip things that look like logos
-                if any(x in src.lower() or x in alt for x in ["logo", "icon", "banner", "header"]):
-                    continue
-                candidates.append((5, src))
-                break
-
+            if prop in ["og:image", "og:image:url"]: candidates.append((10, content))
+            elif name in ["twitter:image", "twitter:image:src"]: candidates.append((8, content))
         if not candidates: return None
         candidates.sort(key=lambda x: x[0], reverse=True)
-        
-        block_list = ['logo', 'icon', 'favicon', 'avatar', 'profile', 'header', 'placeholder', 'default', 'newsletter', 'subscribe', 'banner', 'button', 'badge', 'spacer', 'pixel']
-        
-        for priority, img_url in candidates:
-            if not img_url or not img_url.startswith('http'): continue
-            url_lower = img_url.lower()
-            
-            # If it's a high priority (OG) image, we only block it if it's EXPLICITLY a logo file
-            # Most sites use /static/logo.png or something similar
-            if priority >= 8:
-                if any(x in url_lower and "logo" in url_lower for x in [".png", ".jpg", ".svg", ".webp"]):
-                    if "article" not in url_lower and "post" not in url_lower:
-                        continue
-                return img_url
-            
-            if not any(word in url_lower for word in block_list):
-                return img_url
-                
-        # Last resort: if we have any candidate at all and we're about to return None
-        if candidates: return candidates[0][1]
-            
-    except Exception as e:
-        print(f"Error fetching OG image for {url}: {e}")
-    return None
+        return candidates[0][1]
+    except: return None
 
 def enrich_article(article):
-    """Enriches an article with a thumbnail if missing or generic."""
+    """Enriches an individual story with a thumbnail if missing or generic."""
     current_thumb = article.get('thumbnail')
     url = article.get('url')
     if not url: return article
-
-    # Generic logo lists
-    generic_fragments = ['substack.com/image/fetch', 'bensbites.com/logo', 'therundown.ai/logo', 'reddit.com/static', 'redditstatic.com']
+    generic_fragments = ['substack.com/image/fetch', 'bensbites.com/logo', 'therundown.ai/logo', 'redditfast', 'reddit.com/static', 'redditstatic.com']
     is_generic = current_thumb and any(f in current_thumb for f in generic_fragments)
-    
     if not current_thumb or is_generic:
-        # Don't re-scrape Twitter/X (Requests usually fails, and they often don't have OG images for single tweets)
-        if "twitter.com" in url or "x.com" in url:
-            return article
-            
         new_img = get_og_image(url)
-        if new_img:
-            article['thumbnail'] = new_img
-        elif is_generic:
-            article['thumbnail'] = None
-                
+        if new_img: article['thumbnail'] = new_img
+        elif is_generic: article['thumbnail'] = None
     return article
 
 def is_real_article(article):
+    """Refined filtering for individual stories."""
     if not article: return False
-    title_lower = (article.get('title') or '').lower()
-    block_words = ['rsvp', 'workshop', 'webinar', 'sponsor', 'partner', 'ad ', 'advertisement', 'newsletter', 'subscribe', 'join us', 'referral', 'sign up', 'read more', 'keep reading', 'previous edition', 'archives', 'feedback', 'survey', 'community highlights', 'job board', 'careers', 'hiring']
+    title = (article.get('title') or '').strip()
+    summary = (article.get('summary') or '').strip()
+    
+    if len(title) < 15: return False
+    
+    title_lower = title.lower()
+    ui_phrases = ['see example', 'live example', 'read more', 'click here', 'follow on', 'view on', 'subscribe', 'newsletter']
+    if any(p in title_lower for p in ui_phrases): return False
+
+    block_words = ['rsvp', 'workshop', 'webinar', 'sponsor', 'partner', 'ad ', 'advertisement', 'referral', 'free credits', 'get $', 'off deal', 'job board', 'hiring', 'careers', 'legal', 'tos', 'terms', 'archives', 'feedback', 'survey', 'community highlights', 'good morning', 'in today']
     if any(word in title_lower for word in block_words): return False
-    if len(title_lower) < 15 and article.get('source') != "Reddit": return False
+    
+    if article.get('source') != "Reddit" and len(summary) < 40: return False
+
     return True
 
-# --- SCRAPER FUNCTIONS ---
+# --- NEW RSS-FIRST SCRAPERS ---
 
-async def scrape_bensbites(context):
-    print("🤖 Scraping Ben's Bites...")
-    page = await context.new_page()
+def get_edition_resume(soup):
+    """Extracts a 2-3 sentence teaser/resume from the first substantial text blocks."""
+    paragraphs = []
+    # Look for the first few paragraphs that aren't too short or navigational
+    for p in soup.find_all(['p', 'div']):
+        text = p.get_text().strip()
+        # Skip short snippets, ads, or header junk
+        if len(text) > 60 and not any(x in text.lower() for x in ['subscribe', 'view in browser', 'read online']):
+            # Clean up extra whitespace/newlines
+            clean_text = re.sub(r'\s+', ' ', text)
+            paragraphs.append(clean_text)
+            if len(paragraphs) >= 2: break
+    
+    resume = " ".join(paragraphs)
+    if len(resume) > 350:
+        resume = resume[:347] + "..."
+    return resume
+
+def scrape_rss_edition(feed_url, source_name):
+    """Fetches and parses a newsletter edition from RSS."""
+    print(f"🤖 Scraping RSS: {source_name}...")
+    import feedparser
     articles = []
-    try:
-        await page.goto("https://www.bensbites.com/", wait_until="domcontentloaded")
-        await asyncio.sleep(2)
-        post_elements = await page.query_selector_all('div[role="article"] a[href*="/p/"]')
-        post_urls = []
-        for el in post_elements[:2]:
-            href = await el.get_attribute("href")
-            if href:
-                if href.startswith("/"): href = f"https://www.bensbites.com{href}"
-                post_urls.append(href)
+    feed = feedparser.parse(feed_url)
+    
+    # We only take the latest 2 editions
+    for entry in feed.entries[:2]:
+        edition_id = str(uuid.uuid4())
+        html_content = entry.get('content', [{}])[0].get('value', entry.get('description', ''))
+        soup = BeautifulSoup(html_content, 'html.parser')
         
-        post_urls = list(dict.fromkeys(post_urls))
-        for url in post_urls:
-            print(f"   Scraping edition: {url}")
-            await page.goto(url, wait_until="domcontentloaded")
-            await asyncio.sleep(2)
-            
-            articles_data = await page.evaluate('''() => {
-                const results = [];
-                // Ben's Bites content is often in <li> or <div> tags
-                const items = Array.from(document.querySelectorAll('li, div.post-content > div, div.body > div'));
-                
-                items.forEach(item => {
-                    const link = item.querySelector('a');
-                    if (!link) return;
-                    const url = link.href;
-                    if (!url || !url.startsWith('http') || url.includes('bensbites.com')) return;
-                    
-                    const title = link.innerText.trim();
-                    if (title.length < 10) return;
-                    
-                    const fullText = item.innerText.trim();
-                    const summary = fullText.replace(title, "").trim();
-                    
-                    // Local image check
-                    let thumbnail = null;
-                    const img = item.querySelector('img');
-                    if (img && img.src.startsWith('http') && !img.src.includes('avatar') && !img.src.includes('profile')) {
-                        thumbnail = img.src;
-                    }
-                    
-                    results.push({ title, url, summary, thumbnail });
-                });
-                return results;
-            }''')
-            
-            for item in articles_data:
-                articles.append({
-                    "id": str(uuid.uuid4()),
-                    "title": item['title'],
-                    "source": "Ben's Bites",
-                    "url": item['url'],
-                    "summary": (item['summary'] or "")[:300],
-                    "published_at": datetime.now(timezone.utc).isoformat(),
-                    "thumbnail": item['thumbnail'],
-                    "tags": ["AI"],
-                    "is_saved": False
-                })
-    except Exception as e:
-        print(f"   ⚠️ Ben's Bites error: {e}")
-    return articles
+        # 1. Get Lead Image
+        lead_image = None
+        # Check enclosures
+        for enc in entry.get('enclosures', []):
+            if enc.get('type', '').startswith('image/'):
+                lead_image = enc.get('href')
+                break
+        
+        # Fallback 1: Feed image
+        if not lead_image and hasattr(feed.feed, 'image'):
+            lead_image = feed.feed.image.href
 
-async def scrape_rundown(context):
-    print("🤖 Scraping Rundown AI...")
-    page = await context.new_page()
-    articles = []
-    try:
-        await page.goto("https://www.therundown.ai", wait_until="domcontentloaded")
-        await asyncio.sleep(2)
-        latest_post = await page.query_selector('a.embla__slide__number, a[href^="/p/"]')
-        if latest_post:
-            url = await latest_post.get_attribute("href")
-            if url.startswith("/"): url = f"https://www.therundown.ai{url}"
-            print(f"   Found latest post: {url}")
-            await page.goto(url, wait_until="domcontentloaded")
-            await asyncio.sleep(3)
-            try:
-                btn = await page.query_selector('button:has-text("Not now")')
-                if btn: await btn.click()
-            except: pass
+        # Fallback 2: First large image in soup (avoid tiny icons)
+        if not lead_image:
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                width = img.get('width', '500') # Assume large if no width
+                if src and src.startswith('http') and int(re.sub(r'\D', '', str(width)) or 500) > 100:
+                    lead_image = src
+                    break
 
-            articles_data = await page.evaluate('''() => {
-                const results = [];
-                const headers = Array.from(document.querySelectorAll('h1, h2, h3'));
-                headers.forEach(header => {
-                    const title = header.innerText.trim();
-                    if (title.length < 12 || title.includes("The Rundown")) return;
-                    
-                    let next = header.nextElementSibling;
-                    let summary = "";
-                    let url = null;
-                    let thumbnail = null;
-                    let count = 0;
-                    while (next && count < 6) {
-                        if (!url) {
-                            const link = next.querySelector('a');
-                            if (link && link.href.startsWith('http')) url = link.href;
-                        }
-                        if (!thumbnail) {
-                            const img = next.querySelector('img');
-                            if (img && img.src.startsWith('http') && !img.src.includes('logo')) thumbnail = img.src;
-                        }
-                        if (next.tagName === 'P' && !summary) summary = next.innerText.trim();
-                        if (['H1', 'H2', 'H3'].includes(next.tagName)) break;
-                        next = next.nextElementSibling;
-                        count++;
-                    }
-                    if (title && (url || summary)) {
-                        results.push({ title, url: url || window.location.href, summary, thumbnail });
-                    }
-                });
-                return results;
-            }''')
-            for item in articles_data:
-                articles.append({
-                    "id": str(uuid.uuid4()),
-                    "title": item['title'],
-                    "source": "The Rundown AI",
-                    "url": item['url'],
-                    "summary": (item['summary'] or "")[:400],
-                    "published_at": datetime.now(timezone.utc).isoformat(),
-                    "thumbnail": item['thumbnail'],
-                    "tags": ["AI"],
-                    "is_saved": False
-                })
-    except Exception as e:
-        print(f"   ⚠️ Rundown error: {e}")
+        # 2. Extract Edition Resume (Heuristic)
+        resume = get_edition_resume(soup) or (entry.summary[:300] if hasattr(entry, 'summary') else "")
+
+        # 3. Extract Nested Stories
+        sub_stories = []
+        # Newsletters often use h2 or strong links for main stories
+        potential_story_containers = soup.find_all(['h2', 'h3', 'strong'])
+        
+        for container in potential_story_containers:
+            link = container.find('a') if hasattr(container, 'find') else None
+            # If not in h2/h3, maybe it's just an <a> tag that's prominent
+            if not link and container.name == 'a': link = container
+            
+            if not link: continue
+            
+            href = link.get('href')
+            if not href or not href.startswith('http') or any(x in href.lower() for x in ['bensbites.com', 'therundown.ai', 'substack.com', 'beehiiv.com', 'twitter.com', 'x.com']):
+                continue
+            
+            title = link.get_text().strip()
+            if len(title) < 15: continue
+            
+            # Extract summary by looking at subsequent siblings
+            summary_parts = []
+            curr = container
+            # If it's a strong tag inside a p, move up to p
+            if curr.name == 'strong' and curr.parent and curr.parent.name == 'p':
+                curr = curr.parent
+            
+            limit = 0
+            sibling = curr.next_sibling
+            while sibling and limit < 3:
+                txt = sibling.get_text().strip() if hasattr(sibling, 'get_text') else str(sibling).strip()
+                if txt and len(txt) > 20:
+                    summary_parts.append(txt)
+                    if len(txt) > 80: break # Found a good paragraph
+                sibling = sibling.next_sibling
+                limit += 1
+
+            sub_stories.append({
+                "id": str(uuid.uuid4()),
+                "title": title,
+                "url": href,
+                "summary": " ".join(summary_parts)[:400],
+                "thumbnail": None # Will be enriched via OG tags later
+            })
+
+        # Filter stories to ensure high quality
+        valid_stories = [s for s in sub_stories if is_real_article({"title": s['title'], "summary": s['summary'], "source": source_name})]
+        
+        # Remove duplicates by URL
+        seen_urls = set()
+        unique_stories = []
+        for s in valid_stories:
+            if s['url'] not in seen_urls:
+                unique_stories.append(s)
+                seen_urls.add(s['url'])
+
+        articles.append({
+            "id": edition_id,
+            "type": "edition",
+            "title": entry.title,
+            "source": source_name,
+            "url": entry.link,
+            "resume": resume,
+            "summary": resume, # Compatibility fallback
+            "published_at": entry.published if hasattr(entry, 'published') else datetime.now(timezone.utc).isoformat(),
+            "thumbnail": lead_image,
+            "stories": unique_stories[:6] # Limit to 6 top stories per edition for dashboard clarity
+        })
+    
     return articles
 
 def fetch_reddit():
@@ -304,50 +223,69 @@ def fetch_reddit():
     articles = []
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get("https://www.reddit.com/r/ArtificialInteligence/new.json?limit=15", headers=headers, timeout=10)
+        res = requests.get("https://www.reddit.com/r/ArtificialInteligence/new.json?limit=10", headers=headers, timeout=10)
         if res.status_code == 200:
-            posts = res.json().get("data", {}).get("children", [])
-            for post in posts:
+            for post in res.json().get("data", {}).get("children", []):
                 p = post["data"]
-                thumb = p.get("thumbnail")
-                if thumb and (not thumb.startswith("http") or any(x in thumb for x in ["redditstatic", "self", "default"])):
-                    thumb = None
                 articles.append({
-                    "id": str(uuid.uuid4()), "title": p.get("title"), "source": "Reddit", "url": f"https://www.reddit.com{p.get('permalink')}", "summary": p.get("selftext")[:200] if p.get("selftext") else None, "published_at": datetime.fromtimestamp(p.get("created_utc"), tz=timezone.utc).isoformat(), "thumbnail": thumb, "tags": ["Reddit"], "is_saved": False
+                    "id": str(uuid.uuid4()),
+                    "type": "article",
+                    "title": p.get("title"),
+                    "source": "Reddit",
+                    "url": f"https://www.reddit.com{p.get('permalink')}",
+                    "summary": p.get("selftext")[:400] if p.get("selftext") else None,
+                    "published_at": datetime.fromtimestamp(p.get("created_utc"), tz=timezone.utc).isoformat(),
+                    "thumbnail": p.get("thumbnail") if p.get("thumbnail", "").startswith("http") else None,
+                    "stories": [] # Reddit posts are flat
                 })
-    except Exception as e: print(f"   ⚠️ Reddit error: {e}")
+    except Exception as e: print(f"   ⚠️ Reddit Error: {e}")
     return articles
 
 # --- MAIN RUNNER ---
 
 @app.function(image=image, volumes={"/data": vol}, timeout=1200)
 async def run_scrapers():
-    from playwright.async_api import async_playwright
-    all_articles = []
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
-        for cookie_file in ["cookies_bensbites.json", "cookies_rundown.json"]:
-            path = f"/data/{cookie_file}"; 
-            if os.path.exists(path):
-                with open(path, "r") as f: await context.add_cookies(json.load(f))
-        results = await asyncio.gather(scrape_bensbites(context), scrape_rundown(context))
-        for r in results: all_articles.extend(r)
-        await browser.close()
-    all_articles.extend(fetch_reddit())
-    filtered = [a for a in all_articles if is_real_article(a)]
-    seen_urls = set(); unique_filtered = []
-    for a in filtered:
-        url = a.get('url')
-        if url not in seen_urls: unique_filtered.append(a); seen_urls.add(url)
-    print(f"🧹 After filtering and deduplication: {len(unique_filtered)}")
-    print("🖼️  Enriching with OG images (Parallel)...")
+    all_content = []
+    
+    # Newsletter RSS
+    feeds = [
+        ("https://www.bensbites.com/feed", "Ben's Bites"),
+        ("https://rss.beehiiv.com/feeds/2R3C6Bt5wj.xml", "The Rundown AI")
+    ]
+    
+    for url, name in feeds:
+        try:
+            all_content.extend(scrape_rss_edition(url, name))
+        except Exception as e:
+            print(f"   ⚠️ Error scraping {name}: {e}")
+
+    # Reddit
+    all_content.extend(fetch_reddit())
+
+    # Enrichment (for nested stories and flat reddit posts)
+    print("🖼️  Enriching with OG images...")
+    
+    def enrich_item(item):
+        # Enrich the edition itself if image is generic
+        enrich_article(item)
+        # Enrich individual stories
+        for story in item.get('stories', []):
+            enrich_article(story)
+        return item
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        enriched = list(executor.map(enrich_article, unique_filtered))
-    final_articles = [a for a in enriched if a.get('title') and len(a['title']) > 5]
-    payload = {"last_updated": datetime.now(timezone.utc).isoformat(), "articles": final_articles}
-    with open("/data/master_payload.json", "w") as f: json.dump(payload, f, indent=2)
-    vol.commit(); print(f"✨ Success! Total unique articles: {len(final_articles)}")
+        final_content = list(executor.map(enrich_item, all_content))
+
+    payload = {
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+        "articles": final_content # Keeping key 'articles' for frontend compatibility but content is now hierarchical
+    }
+    
+    with open("/data/master_payload.json", "w") as f:
+        json.dump(payload, f, indent=2)
+    
+    vol.commit()
+    print(f"✨ Success! Total editions/posts: {len(final_content)}")
     return payload
 
 @app.function(image=image, schedule=modal.Cron("0 0 * * *"), volumes={"/data": vol})
@@ -361,7 +299,7 @@ def get_data():
     try:
         vol.reload()
         with open("/data/master_payload.json", "r") as f: return json.load(f)
-    except: return {"error": "No data found. Wait for the first scrape."}
+    except: return {"error": "No data found."}
 
 if __name__ == "__main__":
     modal.runner.deploy_app(app)
