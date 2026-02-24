@@ -10,8 +10,10 @@ import {
   Newspaper,
   Save,
   LayoutGrid,
+  ChevronDown,
   ChevronRight,
-  Heart
+  Heart,
+  CalendarDays
 } from 'lucide-react'
 import NeuralHeroDemo from './components/NeuralHeroDemo'
 
@@ -45,6 +47,7 @@ function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [expandedEditions, setExpandedEditions] = useState<Set<string>>(new Set());
+  const [openCards, setOpenCards] = useState<Set<string>>(new Set());
 
   // Persistence: Editions and Individual Stories
   const [savedIds, setSavedIds] = useState<string[]>(() => {
@@ -93,6 +96,14 @@ function App() {
   const toggleExpanded = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setExpandedEditions(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleOpen = (id: string) => {
+    setOpenCards(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
@@ -181,9 +192,11 @@ function App() {
               key={article.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.02 }}
-              className={`article-card ${article.type === 'edition' ? 'edition-mode' : ''}`}
+              transition={{ delay: index * 0.02, layout: { duration: 0.3 } }}
+              className={`article-card cursor-pointer ${article.type === 'edition' ? 'edition-mode' : ''} ${openCards.has(article.id) ? 'is-open' : ''}`}
+              onClick={() => toggleOpen(article.id)}
             >
+              {/* Image + Overlays */}
               <div className="image-container relative">
                 {article.thumbnail ? (
                   <img src={article.thumbnail} alt="" className="article-image" />
@@ -192,80 +205,111 @@ function App() {
                     <LayoutGrid size={48} className="text-white opacity-5" />
                   </div>
                 )}
+
+                {/* Source tag — top left */}
                 <div className="absolute top-4 left-4 source-tag bg-black/60 backdrop-blur-md border border-white/10 uppercase tracking-widest text-[10px] py-1 px-3 rounded-full flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${article.source === 'Reddit' ? 'bg-orange-500' : 'bg-[#BFF549]'}`}></div>
                   {article.source}
                 </div>
+
+                {/* Date badge — bottom left */}
+                <div className="absolute bottom-4 left-4 flex items-center gap-1.5 bg-black/60 backdrop-blur-md border border-white/10 text-[11px] text-white/80 py-1 px-3 rounded-full">
+                  <CalendarDays size={11} className="text-[#BFF549]" />
+                  {formatDate(article.published_at)}
+                </div>
+
+                {/* Save button — top right */}
                 <button
                   className={`absolute top-4 right-4 p-2 rounded-full transition-all ${isSaved(article.id) ? 'bg-[#BFF549] text-black scale-110' : 'bg-black/40 text-white hover:bg-white/20'}`}
-                  onClick={(e) => toggleSave(article.id, e)}
+                  onClick={(e) => { e.stopPropagation(); toggleSave(article.id, e); }}
                 >
                   <Bookmark size={18} fill={isSaved(article.id) ? "black" : "none"} />
                 </button>
-              </div>
 
-              <div className="card-content">
-                <h3 className="article-title text-xl font-bold leading-tight mb-4">{article.title}</h3>
-
-                {article.type === 'edition' && article.resume && (
-                  <div className="edition-resume">
-                    {article.resume}
-                  </div>
-                )}
-
-                {!article.resume && article.summary && (
-                  <p className="article-summary text-muted text-sm line-clamp-2 mb-4">
-                    {article.summary}
-                  </p>
-                )}
-
-                {/* NESTED STORIES */}
-                {article.stories && article.stories.length > 0 && (
-                  <div className="nested-stories-container border-t border-white/5 pt-4 mt-2 space-y-2">
-                    <div className="text-[10px] uppercase font-bold tracking-widest text-muted/60 mb-2 flex items-center gap-2">
-                      <ChevronRight size={12} className="text-[#BFF549]" />
-                      Highlights
-                    </div>
-                    {(expandedEditions.has(article.id) ? article.stories : article.stories.slice(0, 3)).map(story => (
-                      <div key={story.id} className={`story-item group transition-all ${isSaved(story.id) ? 'saved' : ''}`}>
-                        <div className="flex justify-between items-start gap-4">
-                          <div className="flex-1 min-w-0">
-                            <h4 className="text-[14px] font-semibold text-white/90 group-hover:text-[#BFF549] transition-colors truncate">{story.title}</h4>
-                            <p className="text-[12px] text-muted line-clamp-1 mt-0.5 opacity-60 leading-relaxed font-mono">{story.summary}</p>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              onClick={(e) => toggleSave(story.id, e)}
-                              className={`p-1.5 rounded-lg transition-all ${isSaved(story.id) ? 'text-[#BFF549]' : 'text-muted/40 hover:text-white'}`}
-                            >
-                              <Heart size={14} fill={isSaved(story.id) ? "currentColor" : "none"} />
-                            </button>
-                            <a href={story.url} target="_blank" rel="noopener" className="p-1.5 rounded-lg text-muted/40 hover:text-white">
-                              <ExternalLink size={14} />
-                            </a>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {article.stories.length > 3 && (
-                      <button
-                        onClick={(e) => toggleExpanded(article.id, e)}
-                        className="w-full mt-2 py-2 text-[11px] font-bold text-[#BFF549]/70 hover:text-[#BFF549] border border-white/5 hover:border-[#BFF549]/30 rounded-lg transition-all flex items-center justify-center gap-1.5"
-                      >
-                        <ChevronRight size={12} className={`transition-transform ${expandedEditions.has(article.id) ? 'rotate-90' : ''}`} />
-                        {expandedEditions.has(article.id) ? `Show fewer` : `${article.stories.length - 3} more highlights`}
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                <div className="card-footer mt-auto pt-4 flex justify-between items-center">
-                  <div className="date-text text-xs opacity-40">{formatTime(article.published_at)}</div>
-                  <a href={article.url} target="_blank" rel="noopener" className="flex items-center gap-2 text-[10px] font-black tracking-tighter text-[#BFF549] hover:brightness-125 transition-all">
-                    {article.type === 'edition' ? 'FULL NEWSLETTER' : 'FULL SOURCE'} <ChevronRight size={14} />
-                  </a>
+                {/* Expand chevron — bottom right */}
+                <div className={`absolute bottom-4 right-4 p-1.5 rounded-full bg-black/40 backdrop-blur-md transition-transform duration-300 ${openCards.has(article.id) ? 'rotate-180' : ''}`}>
+                  <ChevronDown size={16} className="text-white/60" />
                 </div>
               </div>
+
+              {/* Always-visible title */}
+              <div className="px-6 pt-5 pb-3">
+                <h3 className="article-title text-xl font-bold leading-tight">{article.title}</h3>
+              </div>
+
+              {/* Expandable body */}
+              <AnimatePresence initial={false}>
+                {openCards.has(article.id) && (
+                  <motion.div
+                    key="body"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                    style={{ overflow: 'hidden' }}
+                  >
+                    <div className="card-content pt-0">
+                      {article.type === 'edition' && article.resume && (
+                        <div className="edition-resume">
+                          {article.resume}
+                        </div>
+                      )}
+
+                      {!article.resume && article.summary && (
+                        <p className="article-summary text-muted text-sm line-clamp-3 mb-4">
+                          {article.summary}
+                        </p>
+                      )}
+
+                      {/* NESTED STORIES */}
+                      {article.stories && article.stories.length > 0 && (
+                        <div className="nested-stories-container border-t border-white/5 pt-4 mt-2 space-y-2">
+                          <div className="text-[10px] uppercase font-bold tracking-widest text-muted/60 mb-2 flex items-center gap-2">
+                            <ChevronRight size={12} className="text-[#BFF549]" />
+                            Highlights
+                          </div>
+                          {(expandedEditions.has(article.id) ? article.stories : article.stories.slice(0, 3)).map(story => (
+                            <div key={story.id} className={`story-item group transition-all ${isSaved(story.id) ? 'saved' : ''}`}>
+                              <div className="flex justify-between items-start gap-4">
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="text-[14px] font-semibold text-white/90 group-hover:text-[#BFF549] transition-colors truncate">{story.title}</h4>
+                                  <p className="text-[12px] text-muted line-clamp-1 mt-0.5 opacity-60 leading-relaxed font-mono">{story.summary}</p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={(e) => toggleSave(story.id, e)}
+                                    className={`p-1.5 rounded-lg transition-all ${isSaved(story.id) ? 'text-[#BFF549]' : 'text-muted/40 hover:text-white'}`}
+                                  >
+                                    <Heart size={14} fill={isSaved(story.id) ? "currentColor" : "none"} />
+                                  </button>
+                                  <a href={story.url} target="_blank" rel="noopener" onClick={e => e.stopPropagation()} className="p-1.5 rounded-lg text-muted/40 hover:text-white">
+                                    <ExternalLink size={14} />
+                                  </a>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                          {article.stories.length > 3 && (
+                            <button
+                              onClick={(e) => toggleExpanded(article.id, e)}
+                              className="w-full mt-2 py-2 text-[11px] font-bold text-[#BFF549]/70 hover:text-[#BFF549] border border-white/5 hover:border-[#BFF549]/30 rounded-lg transition-all flex items-center justify-center gap-1.5"
+                            >
+                              <ChevronRight size={12} className={`transition-transform ${expandedEditions.has(article.id) ? 'rotate-90' : ''}`} />
+                              {expandedEditions.has(article.id) ? `Show fewer` : `${article.stories.length - 3} more highlights`}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="card-footer mt-auto pt-4 flex justify-between items-center" onClick={e => e.stopPropagation()}>
+                        <a href={article.url} target="_blank" rel="noopener" className="flex items-center gap-2 text-[10px] font-black tracking-tighter text-[#BFF549] hover:brightness-125 transition-all ml-auto">
+                          {article.type === 'edition' ? 'FULL NEWSLETTER' : 'FULL SOURCE'} <ChevronRight size={14} />
+                        </a>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           ))}
         </AnimatePresence>
@@ -281,18 +325,12 @@ function App() {
   )
 }
 
-function formatTime(isoString: string) {
+function formatDate(isoString: string) {
   try {
     const date = new Date(isoString);
-    const now = new Date();
-    const diffInMs = now.getTime() - date.getTime();
-    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
-
-    if (isNaN(date.getTime())) return isoString;
-    if (diffInHours < 1) return 'Just now';
-    if (diffInHours < 24) return `${diffInHours}h ago`;
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  } catch { return isoString; }
+    if (isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return ''; }
 }
 
 export default App
