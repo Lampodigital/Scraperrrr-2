@@ -79,9 +79,20 @@ def is_real_article(article):
     summary = (article.get('summary') or '').strip()
     
     if len(title) < 15: return False
-    
+    # Reject titles that look like sentence fragments (end with comma or are all lowercase)
+    if title.endswith(',') or title.endswith(':') or title.endswith(';'): return False
+    # Title should read like a headline: starts with uppercase, contains at least 2 words
+    words = title.split()
+    if len(words) < 3: return False
+    # If the title starts lowercase it's likely a fragment of surrounding text
+    if title[0].islower(): return False
+    # Reject if title has too many lowercase function words as a proportion (likely a sentence fragment)
+    # A real headline has ≥ 1 word capitalized beyond the first
+    capitalized_count = sum(1 for w in words if w and w[0].isupper())
+    if capitalized_count < 1: return False
+
     title_lower = title.lower()
-    ui_phrases = ['see example', 'live example', 'read more', 'click here', 'follow on', 'view on', 'subscribe', 'newsletter']
+    ui_phrases = ['see example', 'live example', 'read more', 'click here', 'follow on', 'view on', 'subscribe', 'newsletter', 'sign up', 'unsubscribe']
     if any(p in title_lower for p in ui_phrases): return False
 
     block_words = ['rsvp', 'workshop', 'webinar', 'sponsor', 'partner', 'ad ', 'advertisement', 'referral', 'free credits', 'get $', 'off deal', 'job board', 'hiring', 'careers', 'legal', 'tos', 'terms', 'archives', 'feedback', 'survey', 'community highlights', 'good morning', 'in today']
@@ -118,8 +129,8 @@ def scrape_rss_edition(feed_url, source_name):
     articles = []
     feed = feedparser.parse(feed_url)
     
-    # We only take the latest 2 editions
-    for entry in feed.entries[:2]:
+    # Take the latest 5 editions for broader coverage
+    for entry in feed.entries[:5]:
         edition_id = str(uuid.uuid4())
         html_content = entry.get('content', [{}])[0].get('value', entry.get('description', ''))
         soup = BeautifulSoup(html_content, 'html.parser')
@@ -213,7 +224,7 @@ def scrape_rss_edition(feed_url, source_name):
             "summary": resume, # Compatibility fallback
             "published_at": entry.published if hasattr(entry, 'published') else datetime.now(timezone.utc).isoformat(),
             "thumbnail": lead_image,
-            "stories": unique_stories[:6] # Limit to 6 top stories per edition for dashboard clarity
+            "stories": unique_stories[:12] # Keep up to 12; frontend shows 3 by default with Show More
         })
     
     return articles

@@ -44,6 +44,7 @@ interface DashboardData {
 function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [expandedEditions, setExpandedEditions] = useState<Set<string>>(new Set());
 
   // Persistence: Editions and Individual Stories
   const [savedIds, setSavedIds] = useState<string[]>(() => {
@@ -88,6 +89,15 @@ function App() {
   };
 
   const isSaved = (id: string) => savedIds.includes(id);
+
+  const toggleExpanded = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedEditions(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const filteredArticles = (data?.articles || []).filter(a => {
     if (filter === 'saved') {
@@ -216,7 +226,7 @@ function App() {
                       <ChevronRight size={12} className="text-[#BFF549]" />
                       Highlights
                     </div>
-                    {article.stories.map(story => (
+                    {(expandedEditions.has(article.id) ? article.stories : article.stories.slice(0, 3)).map(story => (
                       <div key={story.id} className={`story-item group transition-all ${isSaved(story.id) ? 'saved' : ''}`}>
                         <div className="flex justify-between items-start gap-4">
                           <div className="flex-1 min-w-0">
@@ -237,6 +247,15 @@ function App() {
                         </div>
                       </div>
                     ))}
+                    {article.stories.length > 3 && (
+                      <button
+                        onClick={(e) => toggleExpanded(article.id, e)}
+                        className="w-full mt-2 py-2 text-[11px] font-bold text-[#BFF549]/70 hover:text-[#BFF549] border border-white/5 hover:border-[#BFF549]/30 rounded-lg transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <ChevronRight size={12} className={`transition-transform ${expandedEditions.has(article.id) ? 'rotate-90' : ''}`} />
+                        {expandedEditions.has(article.id) ? `Show fewer` : `${article.stories.length - 3} more highlights`}
+                      </button>
+                    )}
                   </div>
                 )}
 
